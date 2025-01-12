@@ -29,17 +29,13 @@ pub const Lexer = struct {
     index: usize,
     line: usize,
     col: usize,
+    allocator: Allocator,
 
-    pub fn init(src: []const u8) Lexer {
-        return Lexer{
-            .src = src,
-            .index = 0,
-            .line = 1,
-            .col = 1,
-        };
+    pub fn init(allocator: Allocator, src: []const u8) Lexer {
+        return Lexer{ .src = src, .index = 0, .line = 1, .col = 1, .allocator = allocator };
     }
 
-    pub fn next_token(self: *Lexer, allocator: Allocator) !Token {
+    pub fn next_token(self: *Lexer) !Token {
         while (self.index < self.src.len) {
             const c = self.src[self.index];
 
@@ -49,11 +45,11 @@ pub const Lexer = struct {
             }
 
             if (c == '/' and self.peek(1) == '/') {
-                return self.scan_inline_comment(allocator);
+                return self.scan_inline_comment();
             }
 
             if (c == '/' and self.peek(1) == '*') {
-                return self.scan_block_comment(allocator);
+                return self.scan_block_comment();
             }
 
             break;
@@ -73,17 +69,17 @@ pub const Lexer = struct {
         // check if the token is alphabetic
         // TODO: check if we need to use the isAlphanumeric instead
         if (std.ascii.isAlphabetic(c) or c == '_') {
-            return self.scan_identifier_or_keyword(allocator);
+            return self.scan_identifier_or_keyword();
         }
 
         // match strings
         if (c == '"' or c == '\'' or c == '¸') {
-            return self.scan_string_literal(allocator);
+            return self.scan_string_literal();
         }
 
         // match the numbers
         if (std.ascii.isDigit(c)) {
-            return self.scan_number_literal(allocator);
+            return self.scan_number_literal();
         }
 
         if (self.is_operator_or_separator(c)) {
@@ -99,7 +95,7 @@ pub const Lexer = struct {
 
         // decorator match
         if (c == '@') {
-            return self.scan_decorator(allocator);
+            return self.scan_decorator();
         }
 
         // default:
@@ -135,7 +131,7 @@ pub const Lexer = struct {
     /// scan the identifier or keyword
     /// must allocate the result on the heap.
     /// can error
-    fn scan_identifier_or_keyword(self: *Lexer, allocator: Allocator) !Token {
+    fn scan_identifier_or_keyword(self: *Lexer) !Token {
         const start = self.index;
 
         while (self.index < self.src.len and (std.ascii.isAlphanumeric(self.src[self.index]) or self.src[self.index] == '_')) {
@@ -147,14 +143,14 @@ pub const Lexer = struct {
 
         return Token{
             .kind = if (keyword) .Keyword else .Identifier,
-            .lexeme = try self.copy_lexeme(allocator, lexeme),
+            .lexeme = try self.copy_lexeme(lexeme),
             .line = self.line,
             .col = self.col,
         };
     }
 
     /// scan the decorater
-    fn scan_decorator(self: *Lexer, allocator: Allocator) !Token {
+    fn scan_decorator(self: *Lexer) !Token {
         const start = self.index;
         self.advance();
 
@@ -182,11 +178,11 @@ pub const Lexer = struct {
         }
 
         const lexeme = self.src[start..self.index];
-        return Token{ .kind = .Decorator, .lexeme = try self.copy_lexeme(allocator, lexeme), .line = self.line, .col = self.col };
+        return Token{ .kind = .Decorator, .lexeme = try self.copy_lexeme(lexeme), .line = self.line, .col = self.col };
     }
 
     // scan the string literal
-    fn scan_string_literal(self: *Lexer, allocator: Allocator) !Token {
+    fn scan_string_literal(self: *Lexer) !Token {
         const start = self.index;
         const quote_char = self.src[start];
 
@@ -201,13 +197,13 @@ pub const Lexer = struct {
         const lexeme = self.src[start..self.index];
         return Token{
             .kind = .StringLiteral,
-            .lexeme = try self.copy_lexeme(allocator, lexeme),
+            .lexeme = try self.copy_lexeme(lexeme),
             .line = self.line,
             .col = self.col,
         };
     }
 
-    fn scan_number_literal(self: *Lexer, allocator: Allocator) !Token {
+    fn scan_number_literal(self: *Lexer) !Token {
         const start = self.index;
         var is_float = false;
 
@@ -226,7 +222,7 @@ pub const Lexer = struct {
         const lexeme = self.src[start..self.index];
         return Token{
             .kind = .NumberLiteral,
-            .lexeme = try self.copy_lexeme(allocator, lexeme),
+            .lexeme = try self.copy_lexeme(lexeme),
             .line = self.line,
             .col = self.col,
         };
@@ -270,7 +266,7 @@ pub const Lexer = struct {
     /// we will just ignore comments.
     /// OR we have to add a scan for TODO, NOTE, FIXME tags.
     /// Maybe thats handy
-    fn scan_inline_comment(self: *Lexer, allocator: Allocator) !Token {
+    fn scan_inline_comment(self: *Lexer) !Token {
         const start = self.index;
         while (self.index < self.src.len and self.src[self.index] != '\n') {
             self.advance();
@@ -279,7 +275,7 @@ pub const Lexer = struct {
         const lexeme = self.src[start..self.index];
         return Token{
             .kind = .Comment,
-            .lexeme = try self.copy_lexeme(allocator, lexeme),
+            .lexeme = try self.copy_lexeme(lexeme),
             .line = self.line,
             .col = self.col,
         };
@@ -287,7 +283,7 @@ pub const Lexer = struct {
 
     /// Scan the block comment to find the end of the comment.
     /// See fn scan_inline_comment for the tag scanning
-    fn scan_block_comment(self: *Lexer, allocator: Allocator) !Token {
+    fn scan_block_comment(self: *Lexer) !Token {
         const start = self.index;
 
         // Skip the initial /* tokens
@@ -326,14 +322,13 @@ pub const Lexer = struct {
         const lexeme = self.src[start..self.index];
         return Token{
             .kind = .Comment,
-            .lexeme = try self.copy_lexeme(allocator, lexeme),
+            .lexeme = try self.copy_lexeme(lexeme),
             .line = self.line,
             .col = self.col,
         };
     }
-    fn copy_lexeme(self: *Lexer, allocator: Allocator, lexeme: []const u8) ![]u8 {
-        _ = self;
-        const buffer = try allocator.alloc(u8, lexeme.len);
+    fn copy_lexeme(self: *Lexer, lexeme: []const u8) ![]u8 {
+        const buffer = try self.allocator.alloc(u8, lexeme.len);
         @memcpy(buffer, lexeme);
         return buffer;
     }
@@ -344,9 +339,9 @@ test "lexer should tokenize inline comments" {
     const allocator = std.testing.allocator;
 
     const source = "// This is a comment\n";
-    var lexer = Lexer.init(source);
+    var lexer = Lexer.init(allocator, source);
 
-    const token = try lexer.next_token(allocator);
+    const token = try lexer.next_token();
     defer allocator.free(token.lexeme);
 
     try std.testing.expectEqual(TokenType.Comment, token.kind);
@@ -357,9 +352,9 @@ test "lexer should tokenize inline comments" {
 test "lexer shoud tokenize block comments" {
     const allocator = std.testing.allocator;
     const source = "/* this is a block comment */";
-    var lexer = Lexer.init(source);
+    var lexer = Lexer.init(allocator, source);
 
-    const token = try lexer.next_token(allocator);
+    const token = try lexer.next_token();
     defer allocator.free(token.lexeme);
 
     try std.testing.expectEqual(TokenType.Comment, token.kind);
