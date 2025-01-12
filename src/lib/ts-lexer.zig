@@ -83,14 +83,7 @@ pub const Lexer = struct {
         }
 
         if (self.is_operator_or_separator(c)) {
-            const start = self.index;
-            self.advance();
-            return Token{
-                .kind = .Operator,
-                .lexeme = self.src[start..self.index],
-                .line = self.line,
-                .col = self.col,
-            };
+            return self.scan_operator_or_separator();
         }
 
         // decorator match
@@ -143,6 +136,28 @@ pub const Lexer = struct {
 
         return Token{
             .kind = if (keyword) .Keyword else .Identifier,
+            .lexeme = try self.copy_lexeme(lexeme),
+            .line = self.line,
+            .col = self.col,
+        };
+    }
+
+    fn scan_operator_or_separator(self: *Lexer) !Token {
+        const start = self.index;
+        const c = self.src[self.index];
+
+        // Handle compound operators like '==', '!='
+        const next_char = self.peek(1);
+        if (c == '=' or c == '!' or c == '<' or c == '>') {
+            if (next_char.? == '=' or next_char.? == '>') {
+                self.advance();
+            }
+        }
+
+        self.advance();
+        const lexeme = self.src[start..self.index];
+        return Token{
+            .kind = .Operator,
             .lexeme = try self.copy_lexeme(lexeme),
             .line = self.line,
             .col = self.col,
@@ -313,11 +328,10 @@ pub const Lexer = struct {
         }
 
         // If we reached the end without finding '*/', it's an unterminated comment
-        if (self.index >= self.src.len) {
-            std.log.warn("index: {any}", .{self.index});
-            std.log.warn("src lenght: {any}", .{self.src.len});
-            // return LexerError.UnterminatedBlockComment;
-        }
+        // TODO: figure out why this happens
+        // if (self.index >= self.src.len) {
+        //     // return LexerError.UnterminatedBlockComment;
+        // }
 
         const lexeme = self.src[start..self.index];
         return Token{
@@ -360,4 +374,18 @@ test "lexer shoud tokenize block comments" {
     try std.testing.expectEqual(TokenType.Comment, token.kind);
     try std.testing.expect(std.mem.eql(u8, token.lexeme, source));
     try std.testing.expectEqual(1, token.line);
+}
+
+test "keyword" {
+    const allocator = std.testing.allocator;
+    const source = "function myFunc() { const x = \"Hello World\" }";
+
+    var lexer = Lexer.init(allocator, source);
+    var index: usize = 0;
+    const token = try lexer.next_token();
+    while (source.len > index) : (index += 1) {
+        try std.testing.expectEqual(TokenType.Keyword, token.kind);
+        try std.testing.expect(std.mem.eql(u8, token.lexeme, "function"));
+    }
+    defer lexer.allocator.free(token.lexeme);
 }
