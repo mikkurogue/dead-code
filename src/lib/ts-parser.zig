@@ -6,6 +6,8 @@ const AST = @import("ts-ast.zig");
 const Node = AST.Node;
 const Allocator = std.mem.Allocator;
 
+const StrEql = std.mem.eql;
+
 pub const Parser = struct {
     lexer: *Lexer,
     current_token: Token,
@@ -60,7 +62,10 @@ pub const Parser = struct {
     fn parse_statement(self: *Parser) !*Node {
         return switch (self.current_token.kind) {
             .Keyword => {
-                if (std.mem.eql(u8, self.current_token.lexeme, "let")) {
+                if (StrEql(u8, self.current_token.lexeme, "let") or
+                    StrEql(u8, self.current_token.lexeme, "const") or
+                    StrEql(u8, self.current_token.lexeme, "var"))
+                {
                     return self.parse_var_decl();
                 } else {
                     return error.UnexpectedKeyword;
@@ -71,7 +76,7 @@ pub const Parser = struct {
     }
 
     fn parse_var_decl(self: *Parser) !*Node {
-        try self.advance(); // skip 'let'
+        try self.advance(); // skip 'the identifier like const let var'
 
         if (self.current_token.kind != .Identifier) {
             return error.ExpectedIdentifier;
@@ -140,14 +145,43 @@ pub const Parser = struct {
     }
 };
 
+// test "lexer parser - function body" {
+//     const allocator = std.testing.allocator;
+//     const source =
+//         \\\ function myFunc() {
+//         \\\   var x = "hello";
+//         \\\   return x;
+//         \\\ }
+//     ;
+//
+//     var lexer = Lexer.init(allocator, source);
+//     var parser = try Parser.init(allocator, &lexer);
+//
+//     const program = try parser.parse_program();
+//
+//     try std.testing.expect(program.Program.statements.len > 1);
+//
+//     defer {
+//         parser.deinit();
+//         allocator.destroy(program);
+//         program.deinit(allocator);
+//     }
+// }
+//
 test "lexer and parser integration - simple variable declaration" {
     const allocator = std.testing.allocator;
-    const source = "let x = 42";
+    const source = "const x = 42";
 
     var lexer = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lexer);
+    defer parser.deinit();
 
     const program = try parser.parse_program();
+
+    defer {
+        program.deinit(allocator);
+        allocator.destroy(program);
+    }
 
     // Test program structure
     try std.testing.expect(program.Program.statements.len == 1);
@@ -166,12 +200,49 @@ test "lexer and parser integration - simple variable declaration" {
     try std.testing.expect(@as(std.meta.Tag(Node), init_node.*) == .Literal);
     try std.testing.expect(init_node.Literal == .Number);
     try std.testing.expect(init_node.Literal.Number == 42);
-
-    std.log.warn("name: {s}", .{name_node.Identifier.name});
-
-    std.log.warn("val: {d}", .{init_node.Literal.Number});
-
-    defer parser.deinit();
-    defer allocator.destroy(program);
-    defer program.deinit(allocator);
 }
+
+// test "parse function declaration" {
+//     const allocator = std.testing.allocator;
+//     const source =
+//         \\function add(x: number, y: number): number {
+//         \\    let result = 42;
+//         \\}
+//     ;
+//
+//     var lexer = Lexer.init(allocator, source);
+//     var parser = try Parser.init(allocator, &lexer);
+//     defer parser.deinit();
+//
+//     const program = try parser.parse_program();
+//     defer {
+//         program.deinit(allocator);
+//         allocator.destroy(program);
+//     }
+//
+//     // Test program structure
+//     try std.testing.expect(program.Program.statements.len == 1);
+//
+//     // Get function declaration
+//     const func_decl = program.Program.statements[0];
+//     try std.testing.expect(@as(std.meta.Tag(Node), func_decl.*) == .FuncDecl);
+//
+//     // Test function name
+//     try std.testing.expectEqualStrings("add", func_decl.FuncDecl.name.Identifier.name);
+//
+//     // Test parameters
+//     try std.testing.expect(func_decl.FuncDecl.params.len == 2);
+//     try std.testing.expectEqualStrings("x", func_decl.FuncDecl.params[0].Parameter.name.Identifier.name);
+//     try std.testing.expectEqualStrings("y", func_decl.FuncDecl.params[1].Parameter.name.Identifier.name);
+//
+//     // Test function body
+//     const body = func_decl.FuncDecl.body;
+//     try std.testing.expect(@as(std.meta.Tag(Node), body.*) == .Block);
+//     try std.testing.expect(body.Block.statements.len == 1);
+//
+//     // Test variable declaration inside function
+//     const var_decl = body.Block.statements[0];
+//     try std.testing.expect(@as(std.meta.Tag(Node), var_decl.*) == .VarDecl);
+//     try std.testing.expectEqualStrings("result", var_decl.VarDecl.name.Identifier.name);
+//     try std.testing.expect(var_decl.VarDecl.initialiser.Literal.Number == 42);
+// }
